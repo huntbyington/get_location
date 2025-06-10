@@ -99,15 +99,15 @@ static void button_handler(uint32_t button_state, uint32_t has_changed)
     case DK_BTN2_MSK:
         if (button_state & DK_BTN2_MSK)
         {
-            char gnss_buffer[128];
-            err = get_gnss_data(gnss_buffer, sizeof(gnss_buffer));
+            char location_buffer[128];
+            err = get_location_data(location_buffer, sizeof(location_buffer));
             if (err < 0)
             {
                 LOG_ERR("Location request failed");
             }
             else
             {
-                LOG_INF("Location: %s", gnss_buffer);
+                LOG_INF("Location: %s", location_buffer);
             }
         }
         break;

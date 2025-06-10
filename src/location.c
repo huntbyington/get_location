@@ -5,6 +5,7 @@ LOG_MODULE_REGISTER(LOCATION, LOG_LEVEL_DBG);
 extern struct k_sem location_start_thread;
 
 static struct k_mutex request_mutex; // Protects location data variables, no two processes should read and write at the same time
+struct k_sem data_retrieved_sem;
 
 enum location_state
 {
@@ -15,77 +16,63 @@ enum location_state
 };
 static enum location_state locationState = STATE_INIT;
 
-struct k_sem data_retrieved_sem;
+static struct location_data location_data;
+static bool location_retrieved = false;
 
-// static struct k_work_delayable rx_work;
-static struct nrf_modem_gnss_pvt_data_frame pvt_data;
+// // static struct k_work_delayable rx_work;
+// static struct nrf_modem_gnss_pvt_data_frame pvt_data;
 
-static int64_t gnss_start_time;
-static bool first_fix = false;
+// static int64_t gnss_start_time;
+// static bool first_fix = false;
 
-static bool gnss_running = false;
+// static bool gnss_running = false;
 
-static void print_fix_data(struct nrf_modem_gnss_pvt_data_frame *pvt_data)
+static void
+print_fix_data(void)
 {
-    LOG_INF("Latitude:       %d", (int)pvt_data->latitude);
-    LOG_INF("Longitude:      %d", (int)pvt_data->longitude);
-    LOG_INF("Altitude:       %d m", (int)pvt_data->altitude);
-    LOG_INF("Time (UTC):     %02u:%02u:%02u.%03u",
-            pvt_data->datetime.hour,
-            pvt_data->datetime.minute,
-            pvt_data->datetime.seconds,
-            pvt_data->datetime.ms);
+    // Print location information
+    LOG_INF("Latitude: %.6f", location_data.latitude / 1000000.0);
+    LOG_INF("Longitude: %.6f", location_data.longitude / 1000000.0);
+    LOG_INF("Accuracy: %.1f m", (double)location_data.accuracy);
 }
 
-static void gnss_event_handler(int event)
+static void location_event_handler(const struct location_event_data *event_data)
 {
-    int err;
-
-    switch (event)
+    switch (event_data->id)
     {
-    case NRF_MODEM_GNSS_EVT_PVT:
-        LOG_INF("Searching...");
-        int num_satellites = 0;
-        for (int i = 0; i < 12; i++)
-        {
-            if (pvt_data.sv[i].signal != 0)
-            {
-                LOG_INF("sv: %d, cn0: %d, signal: %d", pvt_data.sv[i].sv, pvt_data.sv[i].cn0, pvt_data.sv[i].signal);
-                num_satellites++;
-            }
-        }
-        LOG_INF("Number of current satellites: %d", num_satellites);
-        err = nrf_modem_gnss_read(&pvt_data, sizeof(pvt_data), NRF_MODEM_GNSS_DATA_PVT);
-        if (err)
-        {
-            LOG_ERR("nrf_modem_gnss_read failed, err %d", err);
-            nrf_modem_gnss_stop();
-            gnss_running = false;
-            return;
-        }
-        if (pvt_data.flags & NRF_MODEM_GNSS_PVT_FLAG_FIX_VALID)
-        {
-            dk_set_led_on(DK_LED1);
-            print_fix_data(&pvt_data);
-            if (!first_fix)
-            {
-                LOG_INF("Time to first fix: %2.1lld s", (k_uptime_get() - gnss_start_time) / 1000);
-                first_fix = true;
-            }
-            LOG_DBG("Line 69");
-            // nrf_modem_gnss_stop();
-            gnss_running = false;
-            k_sem_give(&data_retrieved_sem);
-            return;
-        }
+    case LOCATION_EVT_LOCATION:
+        LOG_INF("Location retrieved successfully");
+
+        // Copy location data
+        memcpy(&location_data, &event_data->location, sizeof(struct location_data));
+        location_retrieved = true;
+
+        print_fix_data();
+
+        // if (location_data.method == LOCATION_METHOD_GNSS)
+        // {
+        //     dk_set_led_on(DK_LED1);
+        // }
+        // else if (location_data.method == LOCATION_METHOD_CELLULAR)
+        // {
+        //     dk_set_led_on(DK_LED2); // Use a different LED for cellular
+        // }
+
+        k_sem_give(&data_retrieved_sem);
         break;
 
-    case NRF_MODEM_GNSS_EVT_PERIODIC_WAKEUP:
-        LOG_INF("GNSS has woken up");
+    case LOCATION_EVT_TIMEOUT:
+        LOG_WRN("Location request timed out");
+        k_sem_give(&data_retrieved_sem);
         break;
 
-    case NRF_MODEM_GNSS_EVT_SLEEP_AFTER_FIX:
-        LOG_INF("GNSS enter sleep after fix");
+    case LOCATION_EVT_ERROR:
+        LOG_ERR("Location request failed");
+        k_sem_give(&data_retrieved_sem);
+        break;
+
+    case LOCATION_EVT_FALLBACK:
+        LOG_INF("Falling triggered");
         break;
 
     default:
@@ -93,43 +80,33 @@ static void gnss_event_handler(int event)
     }
 }
 
-int gnss_init(void)
+int location_init_system(void)
 {
+    int err;
 
     if (dk_leds_init() != 0)
     {
         LOG_ERR("Failed to initialize the LED library");
-    }
-
-    // Activates GNSS
-    if (lte_lc_func_mode_set(LTE_LC_FUNC_MODE_ACTIVATE_GNSS) != 0)
-    {
-        LOG_ERR("Failed to activate GNSS functional mode");
-        return 0;
-    }
-
-    // Registers GNSS event handler
-    if (nrf_modem_gnss_event_handler_set(gnss_event_handler) != 0)
-    {
-        LOG_ERR("Failed to set GNSS event handler");
         return -1;
     }
 
-    // Sets retry period for when GNSS doen't get a lock
-    if (nrf_modem_gnss_fix_interval_set(CONFIG_GNSS_PERIODIC_INTERVAL) != 0)
+    // Initialize the Location library
+    err = location_init(location_event_handler);
+    if (err)
     {
-        LOG_ERR("Failed to set GNSS fix interval");
+        LOG_ERR("Failed to initialize location library, error: %d", err);
         return -1;
     }
 
-    if (nrf_modem_gnss_fix_retry_set(CONFIG_GNSS_PERIODIC_TIMEOUT) != 0)
+    // Register the event handler
+    err = location_handler_register(location_event_handler);
+    if (err)
     {
-        LOG_ERR("Failed to set GNSS fix retry");
+        LOG_ERR("Failed to register location handler, error: %d", err);
         return -1;
     }
 
     k_mutex_init(&request_mutex);
-
     k_sem_init(&data_retrieved_sem, 0, 1);
 
     return 0;
@@ -137,34 +114,44 @@ int gnss_init(void)
 
 int request_location(void)
 {
+    int err;
+
     if (k_mutex_lock(&request_mutex, K_MSEC(100)))
     {
         LOG_ERR("Failed to lock request location function");
         return -1;
     }
 
-    if (gnss_running)
-    {
-        LOG_WRN("GNSS already running");
-        nrf_modem_gnss_stop();
-    }
+    // Configure location request with fallback
+    struct location_config config;
+    enum location_method methods[] = {LOCATION_METHOD_GNSS, LOCATION_METHOD_CELLULAR};
 
-    LOG_INF("Starting GNSS fix request");
-    gnss_start_time = k_uptime_get();
+    // Set default values for the methods
+    location_config_defaults_set(&config, ARRAY_SIZE(methods), methods);
 
-    if (nrf_modem_gnss_start() != 0)
+    // Configure request mode as fallback
+    config.mode = LOCATION_REQ_MODE_FALLBACK;
+
+    // Set timeouts
+    config.timeout = 180 * MSEC_PER_SEC; // Overall timeout
+    config.methods[0].gnss.timeout = CONFIG_GNSS_PERIODIC_TIMEOUT * MSEC_PER_SEC;
+    config.methods[1].cellular.timeout = 15 * MSEC_PER_SEC;
+
+    // Request location
+    LOG_INF("Starting location request with GNSS and cellular fallback");
+    err = location_request(&config);
+    if (err)
     {
-        LOG_ERR("Failed to start GNSS");
+        LOG_ERR("Failed to request location, error: %d", err);
+        k_mutex_unlock(&request_mutex);
         return -1;
     }
-
-    gnss_running = true;
 
     k_mutex_unlock(&request_mutex);
     return 0;
 }
 
-int get_gnss_data(char *buf, size_t len)
+int get_location_data(char *buf, size_t len)
 {
     if (k_mutex_lock(&request_mutex, K_MSEC(100)))
     {
@@ -172,15 +159,20 @@ int get_gnss_data(char *buf, size_t len)
         return -1;
     }
 
-    if (!first_fix)
+    if (!location_retrieved)
     {
-        LOG_DBG("No first fix");
+        LOG_DBG("No location data available");
+        k_mutex_unlock(&request_mutex);
         return -ENODATA;
     }
 
+    int ret = snprintf(buf, len, "Lat: %.6f, Lon: %.6f, Accuracy: %.1f m",
+                       location_data.latitude / 1000000.0,
+                       location_data.longitude / 1000000.0,
+                       (double)location_data.accuracy);
+
     k_mutex_unlock(&request_mutex);
-    return snprintf(buf, len, "Lat: %d, Lon: %d",
-                    (int)pvt_data.latitude, (int)pvt_data.longitude);
+    return ret;
 }
 
 void locationFSM(void)
@@ -192,7 +184,7 @@ void locationFSM(void)
         switch (locationState)
         {
         case STATE_INIT:
-            if (gnss_init())
+            if (location_init_system())
             {
                 locationState = STATE_ERROR;
                 break;
@@ -212,7 +204,7 @@ void locationFSM(void)
             k_sem_take(&data_retrieved_sem, K_FOREVER);
             break;
         case STATE_ERROR:
-            LOG_ERR("Button initialization error retrying in 5s");
+            LOG_ERR("Location initialization error retrying in 5s");
             k_msleep(5000);
             locationState = STATE_INIT;
             break;

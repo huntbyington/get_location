@@ -8,6 +8,7 @@
 
 #include <nrf_modem_gnss.h> // Import for GPS
 #include <modem/lte_lc.h>
+#include <modem/location.h>
 
 #include <dk_buttons_and_leds.h> // For DK board LEDs/buttons
 
@@ -32,7 +33,7 @@ int request_location(void);
  * @param len Length of buffer
  * @return 0 if valid data exists, negative otherwise
  */
-int get_gnss_data(char *buf, size_t len);
+int get_location_data(char *buf, size_t len);
 
 void locationFSM(void);
 
