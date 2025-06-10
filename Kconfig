@@ -1,0 +1,43 @@
+menu "Location Sample"
+    config GNSS_PERIODIC_INTERVAL
+        int "Fix interval for periodic GPS fixes"
+        range 0 65535
+        default 120
+        help
+            Fix interval (in seconds) for periodic fixes.
+
+    config GNSS_PERIODIC_TIMEOUT
+        int "Fix timeout for periodic GPS fixes"
+        range 0 65535
+        default 480
+        help
+            Fix timeout (in seconds) for periodic fixes.
+            If set to zero, GNSS is allowed to run indefinitely until a valid PVT estimate is produced.
+
+    config GET_LOCATION_INTERVAL
+        int "Interval between get locatoin calls"
+        range 1 32768
+        default 1440
+        help
+          Time (in minutes) between get location requests. 
+          Default value is equivalent to 24 hours.
+
+    config LOCATION_THREAD_STACKSIZE
+        int "Queue thread stack size in bytes"
+        default 1024
+        help
+            Specifies the stack size for the queue thread. Adjust based on the thread's
+            requirements and available memory.
+
+    config LOCATION_THREAD_PRIORITY
+        int "Queue thread priority"
+        default 7
+        help
+            Sets the scheduling priority for the queue thread. 
+            In Zephyr, lower numbers denote lower priority for preemptive threads.
+            Use negative values for cooperative threads (higher priority).
+endmenu
+
+menu "Zephyr Kernel"
+    source "Kconfig.zephyr"
+endmenu
