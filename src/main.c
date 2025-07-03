@@ -22,36 +22,18 @@ K_THREAD_DEFINE(location_fsm_tid, CONFIG_LOCATION_THREAD_STACKSIZE, locationFSM,
 
 static K_SEM_DEFINE(run_sample, 0, 1);
 
-static void lte_handler(const struct lte_lc_evt *const evt)
+static void lte_event_handler(const struct lte_lc_evt *const evt)
 {
     switch (evt->type)
     {
-    /* On changed registration status, print status */
     case LTE_LC_EVT_NW_REG_STATUS:
-        if ((evt->nw_reg_status != LTE_LC_NW_REG_REGISTERED_HOME) &&
-            (evt->nw_reg_status != LTE_LC_NW_REG_REGISTERED_ROAMING))
+        if ((evt->nw_reg_status == LTE_LC_NW_REG_REGISTERED_HOME) ||
+            (evt->nw_reg_status == LTE_LC_NW_REG_REGISTERED_ROAMING))
         {
-            break;
+            printk("Connected to LTE\n");
+            k_sem_give(&run_sample);
         }
-        LOG_INF("Network registration status: %s",
-                evt->nw_reg_status == LTE_LC_NW_REG_REGISTERED_HOME ? "Connected - home network" : "Connected - roaming");
-        k_sem_give(&run_sample);
-
-        dk_set_led_on(DK_LED2);
-
         break;
-    /* On event RRC update, print RRC mode */
-    case LTE_LC_EVT_RRC_UPDATE:
-        LOG_INF("RRC mode: %s", evt->rrc_mode == LTE_LC_RRC_MODE_CONNECTED ? "Connected" : "Idle");
-        break;
-    // case LTE_LC_EVT_PSM_UPDATE:
-    //     LOG_INF("PSM parameter update: TAU: %d, Active time: %d",
-    //             evt->psm_cfg.tau, evt->psm_cfg.active_time);
-    //     if (evt->psm_cfg.active_time == -1)
-    //     {
-    //         LOG_ERR("Network rejected PSM parameters. Failed to enable PSM");
-    //     }
-    //     break;
     default:
         break;
     }
@@ -71,7 +53,7 @@ static int modem_configure(void)
     }
 
     LOG_INF("Connecting to LTE network");
-    err = lte_lc_connect_async(lte_handler);
+    err = lte_lc_connect_async(lte_event_handler);
     if (err)
     {
         LOG_ERR("Error in lte_lc_connect_async, error: %d", err);
@@ -82,33 +64,33 @@ static int modem_configure(void)
 
 static void button_handler(uint32_t button_state, uint32_t has_changed)
 {
-    int err;
-
     switch (has_changed)
     {
     case DK_BTN1_MSK:
         if (button_state & DK_BTN1_MSK)
         {
-            err = request_location();
-            if (err)
-            {
-                LOG_ERR("Location request failed");
-            }
+            //    err = request_location();
+            //     if (err)
+            //     {
+            //         LOG_ERR("Location request failed");
+            //     }
+            LOG_DBG("Button 1 ignored");
         }
         break;
     case DK_BTN2_MSK:
         if (button_state & DK_BTN2_MSK)
         {
-            char location_buffer[128];
-            err = get_location_data(location_buffer, sizeof(location_buffer));
-            if (err < 0)
-            {
-                LOG_ERR("Location request failed");
-            }
-            else
-            {
-                LOG_INF("Location: %s", location_buffer);
-            }
+            // char location_buffer[128];
+            // err = get_location_data(location_buffer, sizeof(location_buffer));
+            // if (err < 0)
+            // {
+            //     LOG_ERR("Location request failed");
+            // }
+            // else
+            // {
+            //     LOG_INF("Location: %s", location_buffer);
+            // }
+            LOG_DBG("Button 2 ignored");
         }
         break;
     }

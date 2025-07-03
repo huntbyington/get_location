@@ -2,10 +2,8 @@
 
 LOG_MODULE_REGISTER(LOCATION, LOG_LEVEL_DBG);
 
-extern struct k_sem location_start_thread;
-
 static struct k_mutex request_mutex; // Protects location data variables, no two processes should read and write at the same time
-struct k_sem data_retrieved_sem;
+// struct k_sem data_retrieved_sem;
 
 enum location_state
 {
@@ -16,24 +14,27 @@ enum location_state
 };
 static enum location_state locationState = STATE_INIT;
 
-static struct location_data location_data;
-static bool location_retrieved = false;
+static struct location_event_data location_data;
 
-// // static struct k_work_delayable rx_work;
-// static struct nrf_modem_gnss_pvt_data_frame pvt_data;
+static K_SEM_DEFINE(location_event, 0, 1);
 
-// static int64_t gnss_start_time;
-// static bool first_fix = false;
+static K_SEM_DEFINE(time_update_finished, 0, 1);
 
-// static bool gnss_running = false;
+static void date_time_evt_handler(const struct date_time_evt *evt)
+{
+    k_sem_give(&time_update_finished);
+}
 
-static void
-print_fix_data(void)
+static void print_fix_data(void)
 {
     // Print location information
-    LOG_INF("Latitude: %.6f", location_data.latitude / 1000000.0);
-    LOG_INF("Longitude: %.6f", location_data.longitude / 1000000.0);
-    LOG_INF("Accuracy: %.1f m", (double)location_data.accuracy);
+    LOG_INF("Printing location:\n");
+    LOG_INF("  method: %s\n", location_method_str(location_data.method));
+    LOG_INF("  Latitude: %.6f", location_data.location.latitude);
+    LOG_INF("  Longitude: %.6f", location_data.location.longitude);
+    LOG_INF("  Accuracy: %.1f m", (double)location_data.location.accuracy);
+    LOG_INF("  Google maps URL: https://maps.google.com/?q=%.06f,%.06f\n\n",
+            location_data.location.latitude, location_data.location.longitude);
 }
 
 static void location_event_handler(const struct location_event_data *event_data)
@@ -41,43 +42,37 @@ static void location_event_handler(const struct location_event_data *event_data)
     switch (event_data->id)
     {
     case LOCATION_EVT_LOCATION:
-        LOG_INF("Location retrieved successfully");
-
-        // Copy location data
-        memcpy(&location_data, &event_data->location, sizeof(struct location_data));
-        location_retrieved = true;
-
+        location_data = *event_data;
         print_fix_data();
-
-        // if (location_data.method == LOCATION_METHOD_GNSS)
-        // {
-        //     dk_set_led_on(DK_LED1);
-        // }
-        // else if (location_data.method == LOCATION_METHOD_CELLULAR)
-        // {
-        //     dk_set_led_on(DK_LED2); // Use a different LED for cellular
-        // }
-
-        k_sem_give(&data_retrieved_sem);
         break;
 
     case LOCATION_EVT_TIMEOUT:
-        LOG_WRN("Location request timed out");
-        k_sem_give(&data_retrieved_sem);
+        LOG_INF("Getting location timed out\n\n");
         break;
 
     case LOCATION_EVT_ERROR:
-        LOG_ERR("Location request failed");
-        k_sem_give(&data_retrieved_sem);
+        LOG_INF("Getting location failed\n\n");
         break;
 
-    case LOCATION_EVT_FALLBACK:
-        LOG_INF("Falling triggered");
+    case LOCATION_EVT_GNSS_ASSISTANCE_REQUEST:
+        LOG_INF("Getting location assistance requested (A-GNSS). Not doing anything.\n\n");
+        break;
+
+    case LOCATION_EVT_GNSS_PREDICTION_REQUEST:
+        LOG_INF("Getting location assistance requested (P-GPS). Not doing anything.\n\n");
         break;
 
     default:
+        LOG_INF("Getting location: Unknown event\n\n");
         break;
     }
+
+    k_sem_give(&location_event);
+}
+
+static void location_event_wait(void)
+{
+    k_sem_take(&location_event, K_FOREVER);
 }
 
 int location_init_system(void)
@@ -90,89 +85,71 @@ int location_init_system(void)
         return -1;
     }
 
-    // Initialize the Location library
+    /* Enable PSM. */
+    lte_lc_psm_req(true);
+    lte_lc_connect();
+
     err = location_init(location_event_handler);
     if (err)
     {
-        LOG_ERR("Failed to initialize location library, error: %d", err);
-        return -1;
-    }
-
-    // Register the event handler
-    err = location_handler_register(location_event_handler);
-    if (err)
-    {
-        LOG_ERR("Failed to register location handler, error: %d", err);
+        LOG_INF("Initializing the Location library failed, error: %d\n", err);
         return -1;
     }
 
     k_mutex_init(&request_mutex);
-    k_sem_init(&data_retrieved_sem, 0, 1);
+    // k_sem_init(&data_retrieved_sem, 0, 1);
 
     return 0;
 }
 
-int request_location(void)
+static void location_init_get(void)
 {
+    k_mutex_lock(&request_mutex, K_FOREVER);
+
     int err;
-
-    if (k_mutex_lock(&request_mutex, K_MSEC(100)))
-    {
-        LOG_ERR("Failed to lock request location function");
-        return -1;
-    }
-
-    // Configure location request with fallback
     struct location_config config;
-    enum location_method methods[] = {LOCATION_METHOD_GNSS, LOCATION_METHOD_CELLULAR};
+    enum location_method methods[] = {LOCATION_METHOD_GNSS};
 
-    // Set default values for the methods
     location_config_defaults_set(&config, ARRAY_SIZE(methods), methods);
+    /* GNSS timeout is set to ten milliseconds, function is meant to update PGPS data upon init. */
+    config.methods[0].gnss.timeout = 10;
 
-    // Configure request mode as fallback
-    config.mode = LOCATION_REQ_MODE_FALLBACK;
-
-    // Set timeouts
-    config.timeout = 180 * MSEC_PER_SEC; // Overall timeout
-    config.methods[0].gnss.timeout = CONFIG_GNSS_PERIODIC_TIMEOUT * MSEC_PER_SEC;
-    config.methods[1].cellular.timeout = 15 * MSEC_PER_SEC;
-
-    // Request location
-    LOG_INF("Starting location request with GNSS and cellular fallback");
     err = location_request(&config);
     if (err)
     {
-        LOG_ERR("Failed to request location, error: %d", err);
-        k_mutex_unlock(&request_mutex);
-        return -1;
+        LOG_INF("Requesting location failed, error: %d\n", err);
+        return;
     }
 
+    location_event_wait();
+
     k_mutex_unlock(&request_mutex);
-    return 0;
 }
 
-int get_location_data(char *buf, size_t len)
+void location_default_get(void)
 {
-    if (k_mutex_lock(&request_mutex, K_MSEC(100)))
+    k_mutex_lock(&request_mutex, K_FOREVER);
+
+    int err;
+    struct location_config config;
+    enum location_method methods[] = {LOCATION_METHOD_GNSS};
+
+    location_config_defaults_set(&config, ARRAY_SIZE(methods), methods);
+    /* GNSS timeout is set to forever. */
+    config.methods[0].gnss.timeout = SYS_FOREVER_MS;
+
+    LOG_INF("Requesting location with the default configuration...\n");
+
+    err = location_request(&config);
+    if (err)
     {
-        LOG_ERR("Failed to lock request location function");
-        return -1;
+        LOG_INF("Requesting location failed, error: %d\n", err);
+        return;
     }
 
-    if (!location_retrieved)
-    {
-        LOG_DBG("No location data available");
-        k_mutex_unlock(&request_mutex);
-        return -ENODATA;
-    }
-
-    int ret = snprintf(buf, len, "Lat: %.6f, Lon: %.6f, Accuracy: %.1f m",
-                       location_data.latitude / 1000000.0,
-                       location_data.longitude / 1000000.0,
-                       (double)location_data.accuracy);
+    location_event_wait();
 
     k_mutex_unlock(&request_mutex);
-    return ret;
 }
 
 void locationFSM(void)
@@ -189,6 +166,7 @@ void locationFSM(void)
                 locationState = STATE_ERROR;
                 break;
             }
+            location_init_get();
             LOG_DBG("INIT -> IDLE");
             locationState = STATE_IDLE;
             break;
@@ -198,10 +176,10 @@ void locationFSM(void)
             locationState = STATE_GET_DATA;
             break;
         case STATE_GET_DATA:
-            request_location();
+            location_default_get();
             LOG_DBG("GET -> IDLE");
             locationState = STATE_IDLE;
-            k_sem_take(&data_retrieved_sem, K_FOREVER);
+            // k_sem_take(&data_retrieved_sem, K_FOREVER);
             break;
         case STATE_ERROR:
             LOG_ERR("Location initialization error retrying in 5s");
