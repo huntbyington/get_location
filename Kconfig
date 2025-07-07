@@ -15,7 +15,7 @@ menu "Location Sample"
             If set to zero, GNSS is allowed to run indefinitely until a valid PVT estimate is produced.
 
     config GET_LOCATION_INTERVAL
-        int "Interval between get locatoin calls"
+        int "Interval between get location calls"
         range 1 32768
         default 1440
         help
