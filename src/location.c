@@ -3,7 +3,6 @@
 LOG_MODULE_REGISTER(LOCATION, LOG_LEVEL_DBG);
 
 static struct k_mutex request_mutex; // Protects location data variables, no two processes should read and write at the same time
-// struct k_sem data_retrieved_sem;
 
 enum location_state
 {
@@ -179,7 +178,6 @@ void locationFSM(void)
             location_default_get();
             LOG_DBG("GET -> IDLE");
             locationState = STATE_IDLE;
-            // k_sem_take(&data_retrieved_sem, K_FOREVER);
             break;
         case STATE_ERROR:
             LOG_ERR("Location initialization error retrying in 5s");
