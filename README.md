@@ -1,7 +1,7 @@
 # Location Tracker for nRF9151 DK
 
 ## Overview
-This firmware runs on Nordic Semiconductor's nRF9160 DK, implementing a Finite State Machine (FSM) that periodically obtains the device's location using GNSS positioning through LTE cellular connectivity. The solution is ideal for asset tracking, fleet management, and location-based IoT applications.
+This firmware runs on Nordic Semiconductor's nRF9151 DK, implementing a Finite State Machine (FSM) that periodically obtains the device's location using GNSS positioning through LTE cellular connectivity. The solution is ideal for asset tracking, fleet management, and location-based IoT applications.
 
 ## Key Features
 - **State Machine Architecture** with four operational states:
