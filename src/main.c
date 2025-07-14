@@ -69,27 +69,12 @@ static void button_handler(uint32_t button_state, uint32_t has_changed)
     case DK_BTN1_MSK:
         if (button_state & DK_BTN1_MSK)
         {
-            //    err = request_location();
-            //     if (err)
-            //     {
-            //         LOG_ERR("Location request failed");
-            //     }
             LOG_DBG("Button 1 ignored");
         }
         break;
     case DK_BTN2_MSK:
         if (button_state & DK_BTN2_MSK)
         {
-            // char location_buffer[128];
-            // err = get_location_data(location_buffer, sizeof(location_buffer));
-            // if (err < 0)
-            // {
-            //     LOG_ERR("Location request failed");
-            // }
-            // else
-            // {
-            //     LOG_INF("Location: %s", location_buffer);
-            // }
             LOG_DBG("Button 2 ignored");
         }
         break;
@@ -113,13 +98,6 @@ int main(void)
         LOG_ERR("Failed to configure the modem");
         return 0;
     }
-
-    // err = gnss_init();
-    // if (err)
-    // {
-    //     LOG_ERR("Failed to initialize GNSS");
-    //     return 0;
-    // }
 
     if (dk_buttons_init(button_handler) != 0)
     {
